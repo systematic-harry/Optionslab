@@ -45,12 +45,44 @@ def get_nse_trading_days(start_date, end_date):
         return None
 
 
+def get_ticker(symbol):
+    """
+    Auto detect correct Yahoo Finance ticker format.
+    Tries NSE → BSE → US (as-is)
+    Returns correct ticker string or None if not found.
+    """
+    # User already added suffix
+    if "." in symbol:
+        df = yf.download(symbol, period="5d", progress=False)
+        return symbol if not df.empty else None
+
+    # Try NSE
+    nse = symbol + ".NS"
+    df  = yf.download(nse, period="5d", progress=False)
+    if not df.empty:
+        return nse
+
+    # Try BSE
+    bse = symbol + ".BO"
+    df  = yf.download(bse, period="5d", progress=False)
+    if not df.empty:
+        return bse
+
+    # Try as-is (US stocks)
+    df = yf.download(symbol, period="5d", progress=False)
+    if not df.empty:
+        return symbol
+
+    return None
+
+
 def fetch_from_yahoo(symbol, start_date, end_date):
     """
     Fetch OHLCV from Yahoo Finance.
+    Auto detects correct ticker suffix (NSE/BSE/US).
     Returns (DataFrame, quality_report_dict)
     """
-    ticker = symbol + ".NS"
+    ticker = get_ticker(symbol)
     quality = {
         "symbol":   symbol,
         "fetched":  0,
@@ -59,6 +91,13 @@ def fetch_from_yahoo(symbol, start_date, end_date):
         "final":    0,
         "warnings": []
     }
+
+    if ticker is None:
+        quality["warnings"].append(f"Symbol '{symbol}' not found on Yahoo Finance — tried .NS, .BO and as-is")
+        return None, quality
+
+    quality["ticker"] = ticker
+    print(f"  {symbol} → {ticker}")
 
     try:
         df = yf.download(
