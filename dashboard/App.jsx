@@ -325,62 +325,59 @@ function MetricCard({label,value,color,sub}){
   );
 }
 
-// ── BACKTEST ────────────────────────────────────────────────
-function BacktestPanel({connected, screeners}){
-  const [strategy,setStrategy]   = useState("");
-  const [frequency,setFrequency] = useState("1 day");
-  const [startDate,setStartDate] = useState("2024-01-01");
-  const [endDate,setEndDate]     = useState(new Date().toISOString().slice(0,10));
-  const [capital,setCapital]     = useState(100000);
-  const [stocks,setStocks]       = useState([]);        // universe from GCS
-  const [selected,setSelected]   = useState([]);        // selected stocks
-  const [selectAll,setSelectAll] = useState(true);
-  const [running,setRunning]     = useState(false);
-  const [results,setResults]     = useState(null);
-  const [error,setError]         = useState(null);
-  const [activeSection,setActiveSection] = useState("summary");
+// ============================================================
+//  BacktestTab_v2.jsx
+//  Replace BacktestPanel function in App.jsx with this
+//  Rename: export default function BacktestTab → function BacktestPanel
+// ============================================================
 
-  // Load universe and set default strategy
-  useEffect(()=>{
-    fetch(`${API}/universe`)
-      .then(r=>r.json())
-      .then(d=>setStocks(d.stocks||[]))
-      .catch(()=>{});
-    if(screeners?.length>0) setStrategy(screeners[0].filename);
-  },[screeners]);
+function BacktestPanel({connected, screeners}){
+  const [strategy,setStrategy]     = useState("");
+  const [frequency,setFrequency]   = useState("1 day");
+  const [startDate,setStartDate]   = useState("2024-01-01");
+  const [endDate,setEndDate]       = useState(new Date().toISOString().slice(0,10));
+  const [capital,setCapital]       = useState(100000);
+  const [useGcs,setUseGcs]         = useState(true);
+  const [singleSymbol,setSingle]   = useState("RELIANCE");
+  const [sizingType,setSizingType] = useState("pct_capital");
+  const [sizingValue,setSizingVal] = useState(10);
+  const [running,setRunning]       = useState(false);
+  const [results,setResults]       = useState(null);
+  const [error,setError]           = useState(null);
+  const [section,setSection]       = useState("summary");
 
   useEffect(()=>{
     if(screeners?.length>0 && !strategy) setStrategy(screeners[0].filename);
   },[screeners]);
 
-  const toggleStock=sym=>{
-    setSelected(p=>p.includes(sym)?p.filter(x=>x!==sym):[...p,sym]);
-    setSelectAll(false);
-  };
+  const sizingLabel = {
+    fixed_amount:  "Amount (₹)",
+    fixed_qty:     "Shares",
+    pct_capital:   "% of Capital",
+    full_capital:  "N/A"
+  }[sizingType];
 
-  const handleSelectAll=()=>{
-    setSelectAll(true);
-    setSelected([]);
-  };
-
-  const runBacktest=async()=>{
+  const runBacktest = async()=>{
     if(!connected){setError("Connect to TWS first!");return;}
     if(!strategy){setError("Select a strategy!");return;}
     setRunning(true);setError(null);setResults(null);
     try{
-      const res=await fetch(`${API}/backtest`,{
+      const res = await fetch(`${API}/backtest`,{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          screener:   strategy,
-          symbols:    selectAll?[]:selected,
+          screener:     strategy,
+          symbols:      useGcs ? [] : [singleSymbol.trim().toUpperCase()],
+          use_gcs:      useGcs,
           frequency,
-          start_date: startDate,
-          end_date:   endDate,
-          capital:    Number(capital),
+          start_date:   startDate,
+          end_date:     endDate,
+          capital:      Number(capital),
+          sizing_type:  sizingType,
+          sizing_value: Number(sizingValue),
         })
       });
-      const data=await res.json();
+      const data = await res.json();
       if(data.error) setError(data.error);
       else setResults(data);
     }catch(e){
@@ -389,83 +386,92 @@ function BacktestPanel({connected, screeners}){
     setRunning(false);
   };
 
-  // PDF Export
-  const exportPDF=()=>{
+  // PDF Export using jsPDF
+  const exportPDF = ()=>{
     if(!results) return;
-    const win=window.open("","_blank");
-    win.document.write(`
-      <html><head><title>Backtest Report — ${results.screener}</title>
-      <style>
-        body{font-family:monospace;padding:20px;background:#fff;color:#111;}
-        h1{font-size:18px;border-bottom:2px solid #000;padding-bottom:8px;}
-        h2{font-size:14px;margin-top:20px;border-bottom:1px solid #ccc;}
-        table{width:100%;border-collapse:collapse;font-size:11px;margin-top:8px;}
-        th{background:#111;color:#fff;padding:6px 8px;text-align:left;}
-        td{padding:5px 8px;border-bottom:1px solid #eee;}
-        tr:nth-child(even){background:#f9f9f9;}
-        .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0;}
-        .card{border:1px solid #ddd;padding:8px 10px;border-radius:4px;}
-        .card .val{font-size:16px;font-weight:700;}
-        .card .lbl{font-size:10px;color:#666;text-transform:uppercase;}
-        .green{color:#16a34a;} .red{color:#dc2626;}
-      </style></head><body>
-      <h1>Backtest Report — ${results.screener?.replace(".py","")}</h1>
-      <p>Period: ${results.start_date} to ${results.end_date} | Frequency: ${results.frequency} | Capital: ₹${fmt(results.capital)}</p>
-      <p>Generated: ${new Date().toLocaleString("en-IN")}</p>
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    script.onload = ()=>{
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      let y = 15;
 
-      <h2>Performance Summary</h2>
-      <div class="grid">
-        <div class="card"><div class="lbl">Net Profit</div><div class="val ${results.net_profit>0?"green":"red"}">₹${fmt(results.net_profit)}</div></div>
-        <div class="card"><div class="lbl">Total Return</div><div class="val ${results.total_return_pct>0?"green":"red"}">${results.total_return_pct}%</div></div>
-        <div class="card"><div class="lbl">Win Rate</div><div class="val">${results.win_rate}%</div></div>
-        <div class="card"><div class="lbl">Profit Factor</div><div class="val">${results.profit_factor}</div></div>
-        <div class="card"><div class="lbl">Gross Profit</div><div class="val green">₹${fmt(results.gross_profit)}</div></div>
-        <div class="card"><div class="lbl">Gross Loss</div><div class="val red">₹${fmt(results.gross_loss)}</div></div>
-        <div class="card"><div class="lbl">Sharpe Ratio</div><div class="val">${results.sharpe_ratio}</div></div>
-        <div class="card"><div class="lbl">Max Drawdown</div><div class="val red">${results.max_drawdown_pct}%</div></div>
-        <div class="card"><div class="lbl">MAR Ratio</div><div class="val">${results.mar_ratio}</div></div>
-        <div class="card"><div class="lbl">Total Trades</div><div class="val">${results.total_trades}</div></div>
-        <div class="card"><div class="lbl">Buy & Hold</div><div class="val">${results.buy_hold_return_pct}%</div></div>
-        <div class="card"><div class="lbl">Monthly Avg</div><div class="val">${results.monthly_avg_return}%</div></div>
-        <div class="card"><div class="lbl">Largest Winner</div><div class="val green">₹${fmt(results.max_profit)}</div></div>
-        <div class="card"><div class="lbl">Largest Loser</div><div class="val red">₹${fmt(results.max_loss)}</div></div>
-        <div class="card"><div class="lbl">Max Consec Losses</div><div class="val">${results.max_consec_losses}</div></div>
-        <div class="card"><div class="lbl">Avg Win Days</div><div class="val">${results.avg_win_days}</div></div>
-      </div>
+      const line = (text, size=10, bold=false)=>{
+        doc.setFontSize(size);
+        doc.setFont("helvetica", bold?"bold":"normal");
+        doc.text(text, 14, y);
+        y += size * 0.5 + 2;
+        if(y > 270){ doc.addPage(); y = 15; }
+      };
 
-      <h2>Stock Summary</h2>
-      <table>
-        <tr><th>Symbol</th><th>Total P&L</th><th>Win Rate</th><th>Trades</th><th>Best</th><th>Worst</th></tr>
-        ${results.stock_summary?.map(s=>`
-          <tr>
-            <td>${s.symbol}</td>
-            <td class="${s.total_pnl>0?"green":"red"}">₹${fmt(s.total_pnl)}</td>
-            <td>${s.win_rate}%</td>
-            <td>${s.total_trades}</td>
-            <td class="green">₹${fmt(s.best_trade)}</td>
-            <td class="red">₹${fmt(s.worst_trade)}</td>
-          </tr>`).join("")}
-      </table>
+      const divider = ()=>{ doc.setDrawColor(200); doc.line(14,y,196,y); y+=4; };
 
-      <h2>Trade Log</h2>
-      <table>
-        <tr><th>Symbol</th><th>Entry Date</th><th>Entry Price</th><th>Exit Date</th><th>Exit Price</th><th>P&L</th><th>Return%</th><th>Days</th></tr>
-        ${results.trade_log?.map(t=>`
-          <tr>
-            <td>${t.symbol}</td>
-            <td>${t.entry_date}</td>
-            <td>₹${fmt(t.entry_price,2)}</td>
-            <td>${t.exit_date}</td>
-            <td>₹${fmt(t.exit_price,2)}</td>
-            <td class="${t.pnl>0?"green":"red"}">₹${fmt(t.pnl,2)}</td>
-            <td class="${t.pnl_pct>0?"green":"red"}">${t.pnl_pct}%</td>
-            <td>${t.hold_days}</td>
-          </tr>`).join("")}
-      </table>
-      </body></html>
-    `);
-    win.document.close();
-    win.print();
+      // Header
+      line("OptionLab — Backtest Report", 16, true);
+      divider();
+      line(`Strategy: ${results.screener?.replace(".py","")}  |  Frequency: ${results.frequency}`);
+      line(`Period: ${results.start_date} to ${results.end_date}  |  Capital: ₹${fmt(results.capital)}`);
+      line(`Sizing: ${results.sizing_type} = ${results.sizing_value}  |  Generated: ${new Date().toLocaleString("en-IN")}`);
+      y += 4;
+
+      // Profitability
+      line("PROFITABILITY", 12, true); divider();
+      line(`Net Profit: ₹${fmt(results.net_profit)}   Total Return: ${results.total_return_pct}%   Buy & Hold: ${results.buy_hold_return_pct}%`);
+      line(`Gross Profit: ₹${fmt(results.gross_profit)}   Gross Loss: ₹${fmt(results.gross_loss)}   Profit Factor: ${results.profit_factor}`);
+      line(`Monthly Avg: ${results.monthly_avg_return}%   Std Dev: ${results.monthly_std}%`);
+      y += 4;
+
+      // Trades
+      line("TRADES", 12, true); divider();
+      line(`Total: ${results.total_trades}   Wins: ${results.winning_trades}   Losses: ${results.losing_trades}   Win Rate: ${results.win_rate}%`);
+      line(`Avg P&L/Trade: ₹${fmt(results.avg_pnl_per_trade,2)}   Max Profit: ₹${fmt(results.max_profit)}   Max Loss: ₹${fmt(results.max_loss)}`);
+      line(`Largest Winner: ${results.largest_winner_pct}% of gross   Largest Loser: ${results.largest_loser_pct}% of gross`);
+      line(`Max Consec Losses: ${results.max_consec_losses}   Avg Win Days: ${results.avg_win_days}   Avg Loss Days: ${results.avg_loss_days}`);
+      line(`Long Trades: ${results.long_trades}   Short Trades: ${results.short_trades}`);
+      y += 4;
+
+      // Risk
+      line("RISK", 12, true); divider();
+      line(`Max Drawdown: ₹${fmt(results.max_drawdown)} (${results.max_drawdown_pct}%)   Sharpe: ${results.sharpe_ratio}   MAR: ${results.mar_ratio}`);
+      line(`Best Stock: ${results.best_stock}   Worst Stock: ${results.worst_stock}`);
+      y += 4;
+
+      // Per stock
+      if(results.stock_summary?.length > 0){
+        line("PER STOCK SUMMARY", 12, true); divider();
+        results.stock_summary.forEach(s=>{
+          line(`${s.symbol.padEnd(15)} P&L: ₹${fmt(s.total_pnl).padStart(10)}  Win%: ${s.win_rate}%  Trades: ${s.total_trades}  L:${s.long_trades}/S:${s.short_trades}`);
+        });
+        y += 4;
+      }
+
+      // Data quality
+      if(results.data_quality?.length > 0){
+        line("DATA QUALITY", 12, true); divider();
+        results.data_quality.forEach(q=>{
+          if(q.fetched > 0){
+            line(`${q.symbol}: ${q.fetched} fetched, ${q.dropped} dropped, ${q.filled} filled → ${q.final} bars used`);
+            q.warnings?.forEach(w=> line(`  ⚠ ${w}`));
+          }
+        });
+        y += 4;
+      }
+
+      // Trade log
+      if(results.trade_log?.length > 0){
+        doc.addPage(); y = 15;
+        line("TRADE LOG", 12, true); divider();
+        line("#    Symbol    Dir    Entry Date   Entry₹    Exit Date    Exit₹     P&L₹     Return%  Days");
+        doc.setDrawColor(200); doc.line(14,y,196,y); y+=3;
+        results.trade_log.forEach((t,i)=>{
+          const row = `${String(i+1).padStart(3)}  ${t.symbol.padEnd(10)} ${t.direction.padEnd(5)}  ${t.entry_date}  ₹${fmt(t.entry_price,2).padStart(8)}  ${t.exit_date}  ₹${fmt(t.exit_price,2).padStart(8)}  ₹${fmt(t.pnl,2).padStart(8)}  ${t.pnl_pct}%  ${t.hold_days}d`;
+          line(row, 8);
+        });
+      }
+
+      doc.save(`backtest_${results.screener?.replace(".py","")}_${results.start_date}_${results.end_date}.pdf`);
+    };
+    document.head.appendChild(script);
   };
 
   return(
@@ -473,7 +479,8 @@ function BacktestPanel({connected, screeners}){
 
       {/* Controls */}
       <Card>
-        <div style={{display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:12,alignItems:"flex-start",flexWrap:"wrap"}}>
+
           {/* Strategy */}
           <div style={{display:"flex",flexDirection:"column",gap:4}}>
             <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Strategy</div>
@@ -488,63 +495,74 @@ function BacktestPanel({connected, screeners}){
             <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Frequency</div>
             <select value={frequency} onChange={e=>setFrequency(e.target.value)}
               style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surf,color:C.text,fontSize:12,cursor:"pointer"}}>
-              {["1 day","1 week","1 month","15 mins","30 mins","1 hour"].map(f=><option key={f}>{f}</option>)}
+              {["1 day","1 week","1 month"].map(f=><option key={f}>{f}</option>)}
             </select>
           </div>
 
-          {/* Stocks */}
+          {/* Data Source */}
           <div style={{display:"flex",flexDirection:"column",gap:4}}>
-            <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>
-              Stocks {!selectAll&&selected.length>0&&<span style={{color:C.accent}}>({selected.length} selected)</span>}
+            <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Data Source</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surf}}>
+              <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12}}>
+                <input type="radio" checked={useGcs} onChange={()=>setUseGcs(true)} style={{accentColor:C.accent}}/>
+                <span style={{color:useGcs?C.accent:C.muted}}>GCS Universe (all 50)</span>
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12}}>
+                <input type="radio" checked={!useGcs} onChange={()=>setUseGcs(false)} style={{accentColor:C.accent}}/>
+                <span style={{color:!useGcs?C.accent:C.muted}}>Single Stock</span>
+              </label>
+              {!useGcs&&(
+                <input value={singleSymbol} onChange={e=>setSingle(e.target.value.toUpperCase())}
+                  placeholder="e.g. RELIANCE"
+                  style={{padding:"4px 8px",borderRadius:4,border:`1px solid ${C.accent}`,background:C.card,color:C.text,fontSize:12,width:120,marginTop:2}}/>
+              )}
             </div>
-            <div style={{display:"flex",gap:6,alignItems:"center"}}>
-              <button onClick={handleSelectAll}
-                style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${selectAll?C.accent:C.border}`,background:selectAll?"#00d4aa22":"transparent",color:selectAll?C.accent:C.muted,fontSize:11,cursor:"pointer"}}>
-                All 50
-              </button>
-              <div style={{position:"relative"}}>
-                <select onChange={e=>{if(e.target.value) toggleStock(e.target.value); e.target.value="";}}
-                  style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surf,color:C.text,fontSize:11,cursor:"pointer",minWidth:120}}>
-                  <option value="">+ Add stock</option>
-                  {stocks.filter(s=>!selected.includes(s.symbol)).map(s=>(
-                    <option key={s.symbol} value={s.symbol}>{s.symbol}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            {!selectAll&&selected.length>0&&(
-              <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4,maxWidth:300}}>
-                {selected.map(sym=>(
-                  <span key={sym} style={{padding:"2px 8px",borderRadius:4,background:"#00d4aa22",border:`1px solid ${C.accent}`,color:C.accent,fontSize:10,cursor:"pointer"}}
-                    onClick={()=>toggleStock(sym)}>
-                    {sym} ×
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
 
-          {/* Dates */}
+          {/* Position Sizing */}
           <div style={{display:"flex",flexDirection:"column",gap:4}}>
-            <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>From</div>
-            <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}
-              style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surf,color:C.text,fontSize:12}}/>
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:4}}>
-            <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>To</div>
-            <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)}
-              style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surf,color:C.text,fontSize:12}}/>
+            <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Position Sizing</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surf}}>
+              <select value={sizingType} onChange={e=>setSizingType(e.target.value)}
+                style={{padding:"4px 8px",borderRadius:4,border:`1px solid ${C.border}`,background:C.card,color:C.text,fontSize:11,cursor:"pointer"}}>
+                <option value="pct_capital">% of Capital</option>
+                <option value="fixed_amount">Fixed Amount (₹)</option>
+                <option value="fixed_qty">Fixed Qty (shares)</option>
+                <option value="full_capital">Full Capital</option>
+              </select>
+              {sizingType !== "full_capital" && (
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:10,color:C.muted}}>{sizingLabel}:</span>
+                  <input type="number" value={sizingValue} onChange={e=>setSizingVal(+e.target.value)}
+                    style={{padding:"3px 6px",borderRadius:4,border:`1px solid ${C.border}`,background:C.card,color:C.text,fontSize:12,width:80}}/>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Capital */}
-          <div style={{display:"flex",flexDirection:"column",gap:4}}>
-            <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Capital (₹)</div>
-            <input type="number" value={capital} onChange={e=>setCapital(e.target.value)}
-              style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surf,color:C.text,fontSize:12,width:110}}/>
+          {/* Dates + Capital */}
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            <div style={{display:"flex",gap:8}}>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>From</div>
+                <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}
+                  style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surf,color:C.text,fontSize:12}}/>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>To</div>
+                <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)}
+                  style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surf,color:C.text,fontSize:12}}/>
+              </div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Capital (₹)</div>
+              <input type="number" value={capital} onChange={e=>setCapital(e.target.value)}
+                style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surf,color:C.text,fontSize:12,width:130}}/>
+            </div>
           </div>
 
           {/* Buttons */}
-          <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"flex-end"}}>
+          <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"flex-end",paddingBottom:2}}>
             {results&&(
               <button onClick={exportPDF}
                 style={{padding:"7px 16px",borderRadius:6,border:`1px solid ${C.warn}`,background:"#f59e0b22",color:C.warn,fontSize:12,fontWeight:600,cursor:"pointer"}}>
@@ -563,62 +581,55 @@ function BacktestPanel({connected, screeners}){
       {results&&<>
         {/* Section tabs */}
         <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`}}>
-          {["summary","charts","trades"].map(s=>(
-            <button key={s} onClick={()=>setActiveSection(s)}
-              style={{padding:"8px 20px",background:"transparent",border:"none",borderBottom:`2px solid ${activeSection===s?C.accent:"transparent"}`,color:activeSection===s?C.accent:C.muted,cursor:"pointer",fontSize:12,fontWeight:activeSection===s?600:400,textTransform:"capitalize"}}>
-              {s==="summary"?"Summary":s==="charts"?"Charts":"Trade Log"}
+          {["summary","charts","trades","quality"].map(s=>(
+            <button key={s} onClick={()=>setSection(s)}
+              style={{padding:"8px 20px",background:"transparent",border:"none",borderBottom:`2px solid ${section===s?C.accent:"transparent"}`,color:section===s?C.accent:C.muted,cursor:"pointer",fontSize:12,fontWeight:section===s?600:400,textTransform:"capitalize"}}>
+              {s==="quality"?"Data Quality":s.charAt(0).toUpperCase()+s.slice(1)}
             </button>
           ))}
         </div>
 
         {/* SUMMARY */}
-        {activeSection==="summary"&&<>
-          {/* Profitability */}
+        {section==="summary"&&<>
           <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Profitability</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
-            <MetricCard label="Net Profit" value={`₹${fmt(results.net_profit)}`} color={pnlCol(results.net_profit)}/>
-            <MetricCard label="Gross Profit" value={`₹${fmt(results.gross_profit)}`} color={C.green}/>
-            <MetricCard label="Gross Loss" value={`₹${fmt(results.gross_loss)}`} color={C.red}/>
-            <MetricCard label="Profit Factor" value={results.profit_factor} color={results.profit_factor>1?C.green:C.red}/>
-            <MetricCard label="Total Return" value={`${results.total_return_pct}%`} color={pnlCol(results.total_return_pct)}/>
-            <MetricCard label="Buy & Hold" value={`${results.buy_hold_return_pct}%`} color={C.muted} sub="benchmark"/>
-            <MetricCard label="Monthly Avg" value={`${results.monthly_avg_return}%`} color={pnlCol(results.monthly_avg_return)}/>
-            <MetricCard label="Monthly Std Dev" value={`${results.monthly_std}%`} color={C.muted}/>
+            <MetricCard label="Net Profit"       value={`₹${fmt(results.net_profit)}`}          color={pnlCol(results.net_profit)}/>
+            <MetricCard label="Gross Profit"      value={`₹${fmt(results.gross_profit)}`}         color={C.green}/>
+            <MetricCard label="Gross Loss"        value={`₹${fmt(results.gross_loss)}`}           color={C.red}/>
+            <MetricCard label="Profit Factor"     value={results.profit_factor}                    color={results.profit_factor>1?C.green:C.red}/>
+            <MetricCard label="Total Return"      value={`${results.total_return_pct}%`}           color={pnlCol(results.total_return_pct)}/>
+            <MetricCard label="Buy & Hold"        value={`${results.buy_hold_return_pct}%`}        color={C.muted} sub="benchmark"/>
+            <MetricCard label="Monthly Avg"       value={`${results.monthly_avg_return}%`}         color={pnlCol(results.monthly_avg_return)}/>
+            <MetricCard label="Monthly Std Dev"   value={`${results.monthly_std}%`}                color={C.muted}/>
           </div>
-
-          {/* Trades */}
           <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginTop:4}}>Trades</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
-            <MetricCard label="Total Trades" value={results.total_trades} color={C.muted}/>
-            <MetricCard label="Winning" value={results.winning_trades} color={C.green}/>
-            <MetricCard label="Losing" value={results.losing_trades} color={C.red}/>
-            <MetricCard label="Win Rate" value={`${results.win_rate}%`} color={results.win_rate>50?C.green:C.red}/>
-            <MetricCard label="Avg P&L/Trade" value={`₹${fmt(results.avg_pnl_per_trade,2)}`} color={pnlCol(results.avg_pnl_per_trade)}/>
-            <MetricCard label="Largest Winner" value={`₹${fmt(results.max_profit)}`} color={C.green} sub={`${results.largest_winner_pct}% of gross profit`}/>
-            <MetricCard label="Largest Loser" value={`₹${fmt(results.max_loss)}`} color={C.red} sub={`${results.largest_loser_pct}% of gross loss`}/>
-            <MetricCard label="Max Consec Losses" value={results.max_consec_losses} color={C.red}/>
-            <MetricCard label="Avg Win Days" value={results.avg_win_days} color={C.green} sub="days in winning pos"/>
-            <MetricCard label="Avg Loss Days" value={results.avg_loss_days} color={C.red} sub="days in losing pos"/>
-            <MetricCard label="Best Stock" value={results.best_stock} color={C.green}/>
-            <MetricCard label="Worst Stock" value={results.worst_stock} color={C.red}/>
+            <MetricCard label="Total Trades"      value={results.total_trades}                     color={C.muted}/>
+            <MetricCard label="Winning"           value={results.winning_trades}                   color={C.green}/>
+            <MetricCard label="Losing"            value={results.losing_trades}                    color={C.red}/>
+            <MetricCard label="Win Rate"          value={`${results.win_rate}%`}                   color={results.win_rate>50?C.green:C.red}/>
+            <MetricCard label="Avg P&L/Trade"     value={`₹${fmt(results.avg_pnl_per_trade,2)}`}  color={pnlCol(results.avg_pnl_per_trade)}/>
+            <MetricCard label="Largest Winner"    value={`₹${fmt(results.max_profit)}`}            color={C.green} sub={`${results.largest_winner_pct}% of gross`}/>
+            <MetricCard label="Largest Loser"     value={`₹${fmt(results.max_loss)}`}              color={C.red}   sub={`${results.largest_loser_pct}% of gross`}/>
+            <MetricCard label="Max Consec Losses" value={results.max_consec_losses}                color={C.red}/>
+            <MetricCard label="Avg Win Days"      value={results.avg_win_days}                     color={C.green}/>
+            <MetricCard label="Avg Loss Days"     value={results.avg_loss_days}                    color={C.red}/>
+            <MetricCard label="Long Trades"       value={results.long_trades}                      color={C.green}/>
+            <MetricCard label="Short Trades"      value={results.short_trades}                     color={C.red}/>
           </div>
-
-          {/* Risk */}
           <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginTop:4}}>Risk</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
-            <MetricCard label="Max Drawdown" value={`₹${fmt(results.max_drawdown)}`} color={C.red}/>
-            <MetricCard label="Max Drawdown %" value={`${results.max_drawdown_pct}%`} color={C.red}/>
-            <MetricCard label="Sharpe Ratio" value={results.sharpe_ratio} color={results.sharpe_ratio>1?C.green:results.sharpe_ratio>0?C.warn:C.red}/>
-            <MetricCard label="MAR Ratio" value={results.mar_ratio} color={results.mar_ratio>1?C.green:C.warn} sub="net gain% / max DD%"/>
+            <MetricCard label="Max Drawdown"      value={`₹${fmt(results.max_drawdown)}`}         color={C.red}/>
+            <MetricCard label="Max Drawdown %"    value={`${results.max_drawdown_pct}%`}           color={C.red}/>
+            <MetricCard label="Sharpe Ratio"      value={results.sharpe_ratio}                     color={results.sharpe_ratio>1?C.green:results.sharpe_ratio>0?C.warn:C.red}/>
+            <MetricCard label="MAR Ratio"         value={results.mar_ratio}                        color={results.mar_ratio>1?C.green:C.warn} sub="net gain% / max DD%"/>
           </div>
-
-          {/* Stock summary table */}
           {results.stock_summary?.length>0&&<>
             <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginTop:4}}>Per Stock</div>
             <Card style={{padding:0,overflow:"hidden"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
                 <thead><tr style={{background:C.surf,borderBottom:`1px solid ${C.border}`}}>
-                  {["Symbol","Total P&L","Win Rate","Trades","Best Trade","Worst Trade"].map(h=>(
+                  {["Symbol","Total P&L","Win Rate","Trades","Best","Worst","Long","Short"].map(h=>(
                     <th key={h} style={{padding:"8px 10px",color:C.muted,textAlign:"left",fontSize:10,fontWeight:400}}>{h}</th>
                   ))}
                 </tr></thead>
@@ -631,6 +642,8 @@ function BacktestPanel({connected, screeners}){
                       <td style={{padding:"7px 10px",fontFamily:"monospace",color:C.muted}}>{s.total_trades}</td>
                       <td style={{padding:"7px 10px",fontFamily:"monospace",color:C.green}}>₹{fmt(s.best_trade)}</td>
                       <td style={{padding:"7px 10px",fontFamily:"monospace",color:C.red}}>₹{fmt(s.worst_trade)}</td>
+                      <td style={{padding:"7px 10px",fontFamily:"monospace",color:C.green}}>{s.long_trades}</td>
+                      <td style={{padding:"7px 10px",fontFamily:"monospace",color:C.red}}>{s.short_trades}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -640,18 +653,13 @@ function BacktestPanel({connected, screeners}){
         </>}
 
         {/* CHARTS */}
-        {activeSection==="charts"&&<>
+        {section==="charts"&&<>
           <Card>
             <Label>Equity Curve</Label>
             <ResponsiveContainer width="100%" height={200}>
               <AreaChart data={results.equity_curve}>
-                <defs>
-                  <linearGradient id="eq" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={C.accent} stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor={C.accent} stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <XAxis dataKey="date" tick={{fontSize:9,fill:C.muted}} interval={Math.floor(results.equity_curve.length/6)}/>
+                <defs><linearGradient id="eq" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.accent} stopOpacity={0.3}/><stop offset="95%" stopColor={C.accent} stopOpacity={0}/></linearGradient></defs>
+                <XAxis dataKey="date" tick={{fontSize:9,fill:C.muted}} interval={Math.floor((results.equity_curve?.length||1)/6)}/>
                 <YAxis tick={{fontSize:9,fill:C.muted}} width={70} tickFormatter={v=>"₹"+(v/1000).toFixed(0)+"k"}/>
                 <Tooltip {...tt} formatter={v=>["₹"+fmt(v),"Equity"]}/>
                 <ReferenceLine y={results.capital} stroke={C.muted} strokeDasharray="4 4" strokeOpacity={0.4}/>
@@ -659,17 +667,11 @@ function BacktestPanel({connected, screeners}){
               </AreaChart>
             </ResponsiveContainer>
           </Card>
-
           <Card>
             <Label>Underwater Curve (Drawdown %)</Label>
             <ResponsiveContainer width="100%" height={160}>
               <AreaChart data={results.underwater_curve}>
-                <defs>
-                  <linearGradient id="uw" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={C.red} stopOpacity={0}/>
-                    <stop offset="95%" stopColor={C.red} stopOpacity={0.4}/>
-                  </linearGradient>
-                </defs>
+                <defs><linearGradient id="uw" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.red} stopOpacity={0}/><stop offset="95%" stopColor={C.red} stopOpacity={0.4}/></linearGradient></defs>
                 <XAxis dataKey="date" tick={{fontSize:9,fill:C.muted}} interval={Math.floor((results.underwater_curve?.length||1)/6)}/>
                 <YAxis tick={{fontSize:9,fill:C.muted}} width={45} tickFormatter={v=>v+"%"}/>
                 <Tooltip {...tt} formatter={v=>[v+"%","Drawdown"]}/>
@@ -681,12 +683,12 @@ function BacktestPanel({connected, screeners}){
         </>}
 
         {/* TRADE LOG */}
-        {activeSection==="trades"&&(
+        {section==="trades"&&(
           <Card style={{padding:0,overflow:"hidden"}}>
             <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:700}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:800}}>
                 <thead><tr style={{background:C.surf,borderBottom:`1px solid ${C.border}`}}>
-                  {["#","Symbol","Entry Date","Entry ₹","Exit Date","Exit ₹","P&L","Return%","Days","Result"].map(h=>(
+                  {["#","Symbol","Dir","Entry Date","Entry ₹","Exit Date","Exit ₹","Shares","P&L","Return%","Days","Result"].map(h=>(
                     <th key={h} style={{padding:"8px 10px",color:C.muted,textAlign:"left",fontSize:10,fontWeight:400}}>{h}</th>
                   ))}
                 </tr></thead>
@@ -694,11 +696,13 @@ function BacktestPanel({connected, screeners}){
                   {results.trade_log?.map((t,i)=>(
                     <tr key={i} style={{borderBottom:`1px solid ${C.border}22`}}>
                       <td style={{padding:"6px 10px",color:C.muted}}>{i+1}</td>
-                      <td style={{padding:"6px 10px",fontWeight:600,color:C.text}}>{t.symbol}</td>
+                      <td style={{padding:"6px 10px",fontWeight:600}}>{t.symbol}</td>
+                      <td style={{padding:"6px 10px",color:t.direction==="LONG"?C.green:C.red,fontWeight:600}}>{t.direction}</td>
                       <td style={{padding:"6px 10px",color:C.muted,fontFamily:"monospace"}}>{t.entry_date}</td>
                       <td style={{padding:"6px 10px",fontFamily:"monospace"}}>₹{fmt(t.entry_price,2)}</td>
                       <td style={{padding:"6px 10px",color:C.muted,fontFamily:"monospace"}}>{t.exit_date}</td>
                       <td style={{padding:"6px 10px",fontFamily:"monospace"}}>₹{fmt(t.exit_price,2)}</td>
+                      <td style={{padding:"6px 10px",fontFamily:"monospace",color:C.muted}}>{t.shares}</td>
                       <td style={{padding:"6px 10px",fontFamily:"monospace",color:pnlCol(t.pnl)}}>₹{fmt(t.pnl,2)}</td>
                       <td style={{padding:"6px 10px",fontFamily:"monospace",color:pnlCol(t.pnl_pct)}}>{t.pnl_pct}%</td>
                       <td style={{padding:"6px 10px",color:C.muted}}>{t.hold_days}d</td>
@@ -714,11 +718,35 @@ function BacktestPanel({connected, screeners}){
             </div>
           </Card>
         )}
+
+        {/* DATA QUALITY */}
+        {section==="quality"&&(
+          <Card>
+            <Label>Data Quality Report</Label>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {results.data_quality?.filter(q=>q.fetched>0).map((q,i)=>(
+                <div key={i} style={{padding:"10px 12px",borderRadius:6,background:C.surf,border:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex",gap:16,alignItems:"center",flexWrap:"wrap"}}>
+                    <span style={{fontWeight:600,fontSize:12,color:C.text,minWidth:100}}>{q.symbol}</span>
+                    <span style={{fontSize:11,color:C.muted}}>Fetched: <span style={{color:C.text,fontFamily:"monospace"}}>{q.fetched}</span></span>
+                    <span style={{fontSize:11,color:C.muted}}>Dropped: <span style={{color:C.red,fontFamily:"monospace"}}>{q.dropped}</span></span>
+                    <span style={{fontSize:11,color:C.muted}}>Filled: <span style={{color:q.filled>0?C.warn:C.green,fontFamily:"monospace"}}>{q.filled}</span></span>
+                    <span style={{fontSize:11,color:C.muted}}>Final: <span style={{color:C.accent,fontFamily:"monospace"}}>{q.final}</span></span>
+                    {q.warnings?.length===0&&<span style={{fontSize:10,color:C.green}}>✓ Clean</span>}
+                  </div>
+                  {q.warnings?.map((w,j)=>(
+                    <div key={j} style={{fontSize:10,color:C.warn,marginTop:4}}>⚠ {w}</div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
       </>}
 
       {!results&&!running&&(
         <div style={{textAlign:"center",padding:"40px",color:C.muted,fontSize:12,border:`1px dashed ${C.border}`,borderRadius:8}}>
-          {connected?"Select strategy, date range and click Run Backtest":"Connect to TWS first"}
+          {connected?"Select strategy, configure options and click Run Backtest":"Connect to TWS first"}
         </div>
       )}
     </div>
