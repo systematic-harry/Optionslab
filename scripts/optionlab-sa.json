@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "option-lab-491107",
+  "private_key_id": "922dab7a55e93f73be15e723de65004f39485eb5",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCqWr0fuxcL9KLN\nfoDtlpk8HS9DPbIPVDXD7NdX7le0ETrrFeZlIZ/R41Y0hUCwLZvwPNAw/FUs7Xgn\nquWYVUmSeh49xIF00ryHDI3Q1hPRJn3jtrJZXKzZR0XtVV4hR7UqEouWicT7Ix2v\nVl1uP5Jx73MUqtJVlrag4lxXwrxVhjGKkxiM9jrw/E5qGwwaPTuJPSZVONyYDgqR\nbAFC73bfpHNH5Gkb6oEYI5lgujYiZOt9NrRM3YED8WOaYfmAEaxjoURPYC/+fIec\nkmdRxqYmFFmbtKPvO8ZB28MZKOKaA5C2TFHnGAAfJIVhjW9T9NtfqqyD6Pv5EZoi\nGlLNoREHAgMBAAECggEAM5qWFMEbW6NJF9+81XvbwlKC6ScMw8j6GnYpy3inN6RK\niUESkEsNu0pW6ET/Uf8W8ECzvksJ0DjFP5rsvucDCOyWMZbPsmBN/MjoQr0+toom\n8255+0jwEUeeXqUQBRvQPMTuZPUp5vt9uAn89nMqfPoQjc+rNIMZooW/fFRAsdUc\nsMTBGyjCMJO3LGpIRzzopF4BYcuuIeIFSJ0z26/ACG/TCOWhc/ES0w6MG+pinBwI\nnGfymsaVC8nGutCx2NmDK8B5Dilaqa63HaZoatVovc8NkMaMrK8de9eRi/zFo1bh\nC7W9mJSzlZthGiyMfWd2cgSn8u/NJmhNqb4JkphFdQKBgQDS9P4rxvJrsfgBRcXa\nz9UZe1XoRteoGz+91JOWt76N1L4Za0AY7ZyXY8t08r9lljx9DjTyQC49aM3yZ2St\ntlr5p7jEHJ9XzDNt64pyHNBUfsgUUI3KSBeiJ0eMf3qxr2UPonlZvNzWmuOQB6Lk\nL9EhYmfWKvpjrX3curcfO4nsOwKBgQDOumQ6aNl6FSQkfrB30E6de4+zZ3b3aLhC\nh4ssxWrgnqJmkTDDG4dbbl7lrrnjMaHpzUTw/B5TUFyu7UXmWsDNHS44evyDLbWY\njH+7rcC519Z2cGKHhV8iSui8VAemM9MNoF7dSZTqmPHEUsiC4EKmok3elg7Z00/B\nh5pz8Pl9pQKBgQCol9Np+R1UpG6n1bNCJEcSjlchwzwmxWAzvegV09MeVp92gRhA\n0+UJuF+pnzcHYQIGj4wQ7uoFefTdfXQgwFQEod4wHQ/bgv63Ij8K46w7WvdcBOTM\nfMEmfm3YAylzR9FkpVyGM0Hq4O5s9S1hYDWqkJKbvs1NTCICfdZLx7F6cQKBgCRE\nDJs2k5hYJxwD4Z9TOsdjysTVTMiAZXq+Xor/Iw2+pozJwb0okilXBmzSpyeVKGtk\nqEiCYiuJeIjzdQTBPPt+uAIOiUfV9/qIA0yAYcP4elYSxyYxHoxcidGoCCN/CfJl\nBN9bLjWtmRQw1Z4oC2lCJdj7iCVsbZxs1oqqZopFAoGAZoR383qCtwxP3UamyhyR\n7b07mELYZ0pcU/nrKuxRgY9MvS/5l3Gw2VSUwdYlbvRIgozucMuN1Y0Xd3LrHVqI\n7v6soT7LVWcX/LBOIxFvo5qfz9yjluZVKzUyhMPHNyINHyMRqsKvfFVhHPitSJUP\n38qZ0TnSVj/V1g0aNWRuQo4=\n-----END PRIVATE KEY-----\n",
+  "client_email": "optionlab-sa@option-lab-491107.iam.gserviceaccount.com",
+  "client_id": "117823492976388336791",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/optionlab-sa%40option-lab-491107.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
