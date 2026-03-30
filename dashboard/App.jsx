@@ -513,8 +513,9 @@ function BacktestPanel({connected, screeners}){
               </label>
               {!useGcs&&(
                 <input value={singleSymbol} onChange={e=>setSingle(e.target.value.toUpperCase())}
-                  placeholder="e.g. RELIANCE"
-                  style={{padding:"4px 8px",borderRadius:4,border:`1px solid ${C.accent}`,background:C.card,color:C.text,fontSize:12,width:120,marginTop:2}}/>
+                  placeholder="e.g. RELIANCE.NS"
+                  style={{padding:"4px 8px",borderRadius:4,border:`1px solid ${C.accent}`,background:C.card,color:C.text,fontSize:12,width:140,marginTop:2}}/>
+              <div style={{fontSize:9,color:C.muted,marginTop:2}}>Yahoo Finance format</div>
               )}
             </div>
           </div>
