@@ -42,7 +42,12 @@ from ib_core import (
 )
 from ibapi.contract import Contract
 from backtester import run_backtest
+from options_backtester import run_options_backtest
+import upstox_core as ux
+import upstox_client
 from datetime import datetime
+
+STRATEGIES_DIR = Path(r"D:\optionlab\scripts\options_strategies")
 
 # ── App setup ─────────────────────────────────────────────────
 app = FastAPI(title="OptionLab API")
@@ -255,17 +260,7 @@ def get_vix():
     except:
         return {"vix": None}
 
-@app.get("/universe")
-def get_universe():
-    """Return list of all stocks from GCS universe."""
-    if not _cache["universe"]:
-        _cache["universe"] = load_universe_from_gcs()
-    return {
-        "stocks": [
-            {"symbol": sym, "conid": conid}
-            for sym, conid in _cache["universe"].items()
-        ]
-    }
+
 # ============================================================
 #  HELPERS
 # ============================================================
@@ -371,35 +366,126 @@ def save_to_gcs(screener_name, data):
 
 # ── Backtest request model ────────────────────────────────────
 class BacktestRequest(BaseModel):
-    screener:      str
-    symbols:       list           # [] = use GCS, ["RELIANCE"] = single
-    use_gcs:       bool = True    # True = GCS universe, False = use symbols
-    frequency:     str
-    start_date:    str            # "2024-01-01"
-    end_date:      str            # "2024-12-31"
-    capital:       float          # starting capital
-    sizing_type:   str = "pct_capital"   # fixed_amount/fixed_qty/pct_capital/full_capital
-    sizing_value:  float = 10.0          # amount/qty/percentage
+    screener:   str
+    symbols:    list
+    frequency:  str
+    start_date: str
+    end_date:   str
+    capital:    float
 
-
-# ── Updated /backtest endpoint ────────────────────────────────
+# ── Backtest endpoint ─────────────────────────────────────────
 @app.post("/backtest")
 def run_backtest_endpoint(req: BacktestRequest):
-    start  = datetime.strptime(req.start_date, "%Y-%m-%d")
-    end    = datetime.strptime(req.end_date,   "%Y-%m-%d")
+    if not is_connected():
+        raise HTTPException(status_code=400,
+                            detail="Not connected to TWS.")
+    if not _cache["universe"]:
+        _cache["universe"] = load_universe_from_gcs()
+        if not _cache["universe"]:
+            raise HTTPException(status_code=500,
+                                detail="Could not load universe.")
 
-    result = run_backtest(
+    symbols = req.symbols if req.symbols else list(_cache["universe"].keys())
+    conids  = _cache["universe"]
+    start   = datetime.strptime(req.start_date, "%Y-%m-%d")
+    end     = datetime.strptime(req.end_date,   "%Y-%m-%d")
+
+    result  = run_backtest(
         screener_name = req.screener,
-        symbols       = req.symbols,
-        use_gcs       = req.use_gcs,
+        symbols       = symbols,
+        conids        = conids,
         frequency     = req.frequency,
         start_date    = start,
         end_date      = end,
         capital       = req.capital,
-        sizing_type   = req.sizing_type,
-        sizing_value  = req.sizing_value,
     )
     return result
+# ============================================================
+#  UPSTOX
+# ============================================================
+
+class TokenRequest(BaseModel):
+    token: str
+
+@app.post("/upstox/token")
+def set_upstox_token(req: TokenRequest):
+    """Set Upstox access token — called from dashboard daily."""
+    try:
+        ux.set_token(req.token)
+        configuration = upstox_client.Configuration()
+        configuration.access_token = req.token
+        api = upstox_client.UserApi(upstox_client.ApiClient(configuration))
+        profile = api.get_profile("2.0")
+        return {
+            "status":    "connected",
+            "user_name": profile.data.user_name,
+            "user_id":   profile.data.user_id,
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/upstox/status")
+def get_upstox_status():
+    return {"connected": ux.is_token_set()}
+
+
+# ── Options strategies list ───────────────────────────────────
+@app.get("/options_strategies")
+def list_options_strategies():
+    scripts = []
+    for f in STRATEGIES_DIR.glob("*.py"):
+        try:
+            spec   = importlib.util.spec_from_file_location("s", f)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            info = module.get_strategy_info()
+            scripts.append({
+                "filename":    f.name,
+                "name":        info.get("name", f.stem),
+                "description": info.get("description", ""),
+                "direction":   info.get("direction", "neutral"),
+                "legs":        info.get("legs", 2),
+            })
+        except:
+            scripts.append({
+                "filename":    f.name,
+                "name":        f.stem.replace("_", " ").title(),
+                "description": "",
+            })
+    return {"strategies": scripts}
+
+
+# ── Options backtest ──────────────────────────────────────────
+class OptionsBacktestRequest(BaseModel):
+    screener:   str
+    strategy:   str
+    symbols:    list
+    start_date: str
+    end_date:   str
+    capital:    float
+
+
+@app.post("/options_backtest")
+def run_options_backtest_endpoint(req: OptionsBacktestRequest):
+    if not ux.is_token_set():
+        raise HTTPException(
+            status_code=400,
+            detail="Upstox token not set. Please set token in dashboard."
+        )
+    start  = datetime.strptime(req.start_date, "%Y-%m-%d")
+    end    = datetime.strptime(req.end_date,   "%Y-%m-%d")
+    result = run_options_backtest(
+        screener_name = req.screener,
+        strategy_name = req.strategy,
+        symbols       = req.symbols,
+        start_date    = start,
+        end_date      = end,
+        capital       = req.capital,
+    )
+    return result
+
+
 # ============================================================
 #  RUN
 # ============================================================
