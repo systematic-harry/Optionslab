@@ -74,8 +74,8 @@ _cache = {
 # ── Request models ────────────────────────────────────────────
 class ScanRequest(BaseModel):
     screener:  str
-    frequency: str
-    periods:   int
+    frequency: Optional[str] = "1 day"
+    periods:   Optional[int] = 14
     save:      Optional[bool] = False
 
 
@@ -133,10 +133,23 @@ def list_screeners():
     """List all screener scripts — populates dashboard dropdown."""
     scripts = []
     for f in SCREENERS_DIR.glob("*.py"):
-        scripts.append({
-            "name":     f.stem.replace("_", " ").title(),
-            "filename": f.name,
-        })
+        entry = {
+            "name":         f.stem.replace("_", " ").title(),
+            "filename":     f.name,
+            "frequency":    None,   # None = user sets manually in UI
+            "sizing_type":  None,   # None = user sets manually in UI
+            "sizing_value": None,
+        }
+        try:
+            _spec = importlib.util.spec_from_file_location("_peek", f)
+            _mod  = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)
+            if hasattr(_mod, "FREQUENCY"):    entry["frequency"]    = _mod.FREQUENCY
+            if hasattr(_mod, "SIZING_TYPE"):  entry["sizing_type"]  = _mod.SIZING_TYPE
+            if hasattr(_mod, "SIZING_VALUE"): entry["sizing_value"] = _mod.SIZING_VALUE
+        except Exception:
+            pass
+        scripts.append(entry)
     return {"screeners": scripts}
 
 
@@ -145,11 +158,187 @@ def list_screeners():
 def run_scan(req: ScanRequest):
     """
     Run a screener.
-    1. Load universe conIds from GCS
-    2. Fetch OHLCV from TWS (cached per frequency)
-    3. Run screener script
-    4. Return results
+    Two paths:
+      A) Yahoo Finance screeners (DATA_SOURCE = "yahoo")
+         → reads stock list from file, downloads from Yahoo, runs screener
+      B) TWS screeners (default)
+         → loads universe from GCS, fetches from TWS, runs screener
     """
+
+    # ── Load screener module ──────────────────────────────────
+    script_path = SCREENERS_DIR / req.screener
+    if not script_path.exists():
+        raise HTTPException(status_code=404,
+                            detail=f"Screener not found: {req.screener}")
+
+    spec   = importlib.util.spec_from_file_location("screener", script_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # ── Check if screener uses Yahoo Finance path ─────────────
+    data_source = getattr(module, "DATA_SOURCE", "tws")
+
+    if data_source == "yahoo":
+        return _run_yahoo_scan(module, req)
+    else:
+        return _run_tws_scan(module, req)
+
+
+def _run_yahoo_scan(module, req):
+    """
+    Yahoo Finance scan path.
+    Screener module must define:
+      - DATA_SOURCE = "yahoo"
+      - STOCK_LIST_FILE = path to CSV with Ticker column
+      - check_conditions() → (ok, reason, extra_data)  [extra_data like benchmark]
+      - screen(df, periods, **kwargs) → (signal, reasons, extras_dict)
+    """
+    import yfinance as yf
+
+    # ── Check conditions (downloads benchmark etc.) ───────────
+    extra_data = {}
+    if hasattr(module, "check_conditions"):
+        result = module.check_conditions()
+        if len(result) == 3:
+            ok, reason, extra_data = result
+        else:
+            ok, reason = result
+        if not ok:
+            return {
+                "status":  "skipped",
+                "reason":  reason,
+                "results": []
+            }
+
+    # ── Load stock list ───────────────────────────────────────
+    stocks = {}
+    stock_list_file = getattr(module, "STOCK_LIST_FILE", None)
+    if stock_list_file and Path(stock_list_file).exists():
+        df_list = pd.read_csv(stock_list_file)
+        # Find ticker and name columns
+        ticker_col = None
+        name_col = None
+        for col in df_list.columns:
+            cl = col.strip().lower()
+            if cl in ("ticker", "yahoo_ticker", "symbol"):
+                ticker_col = col
+            elif cl in ("stock_name", "name", "stock"):
+                name_col = col
+        if ticker_col is None:
+            ticker_col = df_list.columns[0]
+        for _, row in df_list.iterrows():
+            t = str(row[ticker_col]).strip()
+            if not t or t == "nan":
+                continue
+            if not t.endswith(".NS") and not t.endswith(".BO"):
+                t = t + ".NS"
+            n = str(row[name_col]).strip() if name_col else t.replace(".NS", "")
+            stocks[t] = n
+        print(f"  Loaded {len(stocks)} stocks from {stock_list_file}")
+    elif hasattr(module, "DEFAULT_STOCKS"):
+        stocks = module.DEFAULT_STOCKS
+        print(f"  Using default stocks from screener — {len(stocks)} stocks")
+    else:
+        raise HTTPException(status_code=500,
+                            detail="No stock list found for Yahoo screener")
+
+    # ── Fetch data period from module ─────────────────────────
+    data_period = getattr(module, "DATA_PERIOD", "2y")
+
+    # ── Download and screen each stock ────────────────────────
+    results = []
+    total = len(stocks)
+    for i, (ticker, name) in enumerate(stocks.items()):
+        try:
+            data = yf.download(ticker, period=data_period, progress=False, auto_adjust=True)
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            if data.empty or len(data) < 100:
+                continue
+
+            stock_close = data["Close"].dropna()
+            price  = round(float(stock_close.iloc[-1]), 2)
+            change = round(float(
+                (stock_close.iloc[-1] - stock_close.iloc[-2])
+                / stock_close.iloc[-2] * 100), 2) if len(stock_close) >= 2 else 0
+
+            # Call screener — pass extra_data (e.g. benchmark)
+            screen_result = module.screen(data, req.periods, **extra_data)
+
+            if len(screen_result) == 3:
+                signal, reasons, extras = screen_result
+            else:
+                signal, reasons = screen_result
+                extras = {}
+
+            row = {
+                "symbol":  name,
+                "ticker":  ticker,
+                "signal":  signal,
+                "reasons": reasons,
+                "price":   price,
+                "change":  change,
+                "chart":   data.tail(60).reset_index().assign(
+                    date=lambda x: x["Date"].astype(str) if "Date" in x.columns else x.index.astype(str)
+                )[["date","Open","High","Low","Close","Volume"]].rename(
+                    columns={"Open":"open","High":"high","Low":"low","Close":"close","Volume":"volume"}
+                ).to_dict("records"),
+            }
+            # Merge screener extras into row (RS_Ratio_10, RS_Mom_10, Quadrant, etc.)
+            row.update(extras)
+
+            # ── Pack full RS series if this is the RS Ratio screener ──
+            # pdf_exporter uses these to draw RS Ratio & Momentum line charts
+            # without re-downloading any data
+            if getattr(module, "DATA_SOURCE", "") == "yahoo" and hasattr(module, "_calc_rs_series"):
+                bench_close = extra_data.get("bench_close")
+                if bench_close is not None:
+                    stock_close_full = data["Close"].dropna()
+                    r10, m10 = module._calc_rs_series(stock_close_full, bench_close, 10)
+                    r21, m21 = module._calc_rs_series(stock_close_full, bench_close, 21)
+                    def _series_tail(s, n=60):
+                        if s is None:
+                            return []
+                        tail = s.dropna().tail(n)
+                        return [round(float(v), 4) for v in tail.values]
+                    row["rs_ratio_10_series"]  = _series_tail(r10)
+                    row["rs_mom_10_series"]    = _series_tail(m10)
+                    row["rs_ratio_21_series"]  = _series_tail(r21)
+                    row["rs_mom_21_series"]    = _series_tail(m21)
+
+            results.append(row)
+
+            if (i + 1) % 10 == 0:
+                print(f"  ... processed {i + 1}/{total}")
+
+        except Exception as e:
+            print(f"  [Error] {ticker}: {e}")
+            continue
+
+        time.sleep(0.1)
+
+    # Sort STRONG → WATCH → SKIP
+    order = {"STRONG": 0, "WATCH": 1, "SKIP": 2}
+    results.sort(key=lambda x: order.get(x["signal"], 3))
+
+    output = {
+        "status":    "success",
+        "screener":  req.screener,
+        "total":     len(results),
+        "strong":    sum(1 for r in results if r["signal"] == "STRONG"),
+        "watch":     sum(1 for r in results if r["signal"] == "WATCH"),
+        "skip":      sum(1 for r in results if r["signal"] == "SKIP"),
+        "results":   results,
+    }
+
+    if req.save:
+        save_to_gcs(req.screener, output)
+
+    return output
+
+
+def _run_tws_scan(module, req):
+    """Original TWS scan path — unchanged."""
     if not is_connected():
         raise HTTPException(status_code=400,
                             detail="Not connected to TWS. Click Connect first.")
@@ -169,16 +358,6 @@ def run_scan(req: ScanRequest):
         print(f"  Fetched {len(_cache['data'])} stocks into memory\n")
     else:
         print(f"  Using cached data — {len(_cache['data'])} stocks")
-
-    # ── Load screener script ──────────────────────────────────
-    script_path = SCREENERS_DIR / req.screener
-    if not script_path.exists():
-        raise HTTPException(status_code=404,
-                            detail=f"Screener not found: {req.screener}")
-
-    spec   = importlib.util.spec_from_file_location("screener", script_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
 
     # ── Check market conditions ───────────────────────────────
     if hasattr(module, "check_conditions"):
@@ -364,14 +543,49 @@ def save_to_gcs(screener_name, data):
     except Exception as e:
         print(f"  [Error] save_to_gcs: {e}")
 
+# ── PDF Export ───────────────────────────────────────────────
+class ExportPdfRequest(BaseModel):
+    screener_type:   str            # screener filename e.g. "rs_ratio_screener.py"
+    stocks:          list           # filtered result rows as sent by frontend
+    filters_applied: Optional[dict] = {}
+
+@app.post("/export-pdf")
+def export_pdf(req: ExportPdfRequest):
+    """
+    Generate a PDF for the current filtered screener results.
+    Accepts the result rows exactly as /scan returned them —
+    chart data and RS series are already embedded, no re-downloading.
+    Returns the PDF as a binary file download.
+    """
+    from fastapi.responses import Response
+    try:
+        sys.path.insert(0, r"D:\optionlab\scripts")
+        from pdf_exporter import generate_pdf
+        pdf_bytes = generate_pdf(
+            screener_type   = req.screener_type,
+            stocks          = req.stocks,
+            filters_applied = req.filters_applied or {},
+        )
+        filename = req.screener_type.replace(".py", "") + "_results.pdf"
+        return Response(
+            content     = pdf_bytes,
+            media_type  = "application/pdf",
+            headers     = {"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PDF export failed: {e}")
+
+
 # ── Backtest request model ────────────────────────────────────
 class BacktestRequest(BaseModel):
-    screener:   str
-    symbols:    list
-    frequency:  str
-    start_date: str
-    end_date:   str
-    capital:    float
+    screener:     str
+    symbols:      list
+    frequency:    str
+    start_date:   str
+    end_date:     str
+    capital:      float
+    sizing_type:  str   = "full_capital"
+    sizing_value: float = 0
 
 # ── Backtest endpoint ─────────────────────────────────────────
 @app.post("/backtest")
@@ -390,14 +604,33 @@ def run_backtest_endpoint(req: BacktestRequest):
     start   = datetime.strptime(req.start_date, "%Y-%m-%d")
     end     = datetime.strptime(req.end_date,   "%Y-%m-%d")
 
+    # Peek screener for script-defined overrides (FREQUENCY, SIZING_TYPE, SIZING_VALUE)
+    effective_frequency    = req.frequency
+    effective_sizing_type  = req.sizing_type
+    effective_sizing_value = req.sizing_value
+    try:
+        _spec = importlib.util.spec_from_file_location("_peek", SCREENERS_DIR / req.screener)
+        _mod  = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        if hasattr(_mod, "FREQUENCY"):
+            effective_frequency = _mod.FREQUENCY
+        if hasattr(_mod, "SIZING_TYPE"):
+            effective_sizing_type = _mod.SIZING_TYPE
+        if hasattr(_mod, "SIZING_VALUE"):
+            effective_sizing_value = _mod.SIZING_VALUE
+    except Exception as _e:
+        print(f"  Screener peek failed: {_e}")
+
     result  = run_backtest(
         screener_name = req.screener,
         symbols       = symbols,
         conids        = conids,
-        frequency     = req.frequency,
+        frequency     = effective_frequency,
         start_date    = start,
         end_date      = end,
         capital       = req.capital,
+        sizing_type   = effective_sizing_type,
+        sizing_value  = effective_sizing_value,
     )
     return result
 # ============================================================

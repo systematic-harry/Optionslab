@@ -2,24 +2,24 @@
 #  ema_crossover.py
 #  Strategy: 10 EMA / 21 EMA Crossover
 #
-#  Entry → 10 EMA crosses above 21 EMA
-#  Exit  → 10 EMA crosses below 21 EMA
-#
-#  Place in: D:\optionlab\scripts\screeners\
+#  Rules:
+#  Signal Day  → close existing position at CLOSE
+#  Next Day    → open new position at OPEN
 # ============================================================
 
 import pandas_ta as ta
 
+
 def check_conditions():
     return True, "No conditions — runs always"
 
+
 def screen(df):
     """
-    10 EMA / 21 EMA crossover strategy.
-    df → OHLCV DataFrame
+    10 EMA / 21 EMA crossover.
+    Returns signal based on PREVIOUS bar close.
+    Entry will be taken on NEXT bar open by backtester.
     """
-    reasons = []
-
     if len(df) < 25:
         return "SKIP", ["Not enough data"]
 
@@ -29,26 +29,20 @@ def screen(df):
     if ema10 is None or ema21 is None:
         return "SKIP", ["EMA calculation failed"]
 
-    current_10  = round(float(ema10.iloc[-1]), 2)
-    current_21  = round(float(ema21.iloc[-1]), 2)
-    previous_10 = round(float(ema10.iloc[-2]), 2)
-    previous_21 = round(float(ema21.iloc[-2]), 2)
+    # Current and previous values
+    curr10 = round(float(ema10.iloc[-1]), 2)
+    curr21 = round(float(ema21.iloc[-1]), 2)
+    prev10 = round(float(ema10.iloc[-2]), 2)
+    prev21 = round(float(ema21.iloc[-2]), 2)
 
-    # Crossover detection
-    bullish_cross = previous_10 <= previous_21 and current_10 > current_21
-    bearish_cross = previous_10 >= previous_21 and current_10 < current_21
+    bullish_cross = prev10 <= prev21 and curr10 > curr21
+    bearish_cross = prev10 >= prev21 and curr10 < curr21
 
     if bullish_cross:
-        signal = "STRONG"
-        reasons.append(f"10 EMA {current_10} crossed above 21 EMA {current_21} ✓")
-    elif current_10 > current_21:
-        signal = "WATCH"
-        reasons.append(f"10 EMA {current_10} above 21 EMA {current_21} — holding")
+        return "STRONG", [f"10 EMA {curr10} crossed above 21 EMA {curr21} ✓"]
     elif bearish_cross:
-        signal = "SKIP"
-        reasons.append(f"10 EMA {current_10} crossed below 21 EMA {current_21} ✗")
+        return "SKIP",   [f"10 EMA {curr10} crossed below 21 EMA {curr21} ✗"]
+    elif curr10 > curr21:
+        return "WATCH",  [f"10 EMA {curr10} above 21 EMA {curr21} — holding"]
     else:
-        signal = "SKIP"
-        reasons.append(f"10 EMA {current_10} below 21 EMA {current_21} ✗")
-
-    return signal, reasons
+        return "SKIP",   [f"10 EMA {curr10} below 21 EMA {curr21} ✗"]
